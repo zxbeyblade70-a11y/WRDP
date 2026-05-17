@@ -1,37 +1,175 @@
 name: RDP
-# rdp by yamzz modifed
+
+# RDP by Yamzz (Modified & Cleaned)
+
 on:
-workflow_dispatch:
+  workflow_dispatch:
+
 jobs:
-secure-rdp:
-runs-on: windows-latest
-timeout-minutes: 3600
-steps:
-- name: Configure Core RDP Settings By Yamzz
-run: |
-Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-netsh advfirewall firewall delete rule name="RDP-Tailscale"
-netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-Restart-Service -Name TermService -Force
-- name: Create RDP User with Secure Password
-run: |
-$username = "YamzzOfficial"
-$password = "YamzzOffical@123"
-$securePass = ConvertTo-SecureString $password -AsPlainText -Force
-New-LocalUser -Name $username -Password $securePass -AccountNeverExpires
-Add-LocalGroupMember -Group "Administrators" -Member $username
-Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-echo "RDP_CREDS=User: $username | Password: $password" >> $env:GITHUB_ENV
-if (-not (Get-LocalUser -Name $username)) {
-exit 1
-}
-- name: Install Tailscale
-run: |
-$tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-$installerPath = "$env:TEMP\tailscale.msi"
-Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-Remove-Item $installerPath -Force
-- name: Establish Tailscale Connection
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+
+      # =========================
+      # Enable RDP + Firewall
+      # =========================
+      - name: Configure RDP Settings
+        shell: powershell
+        run: |
+          Write-Host "Enabling RDP..."
+
+          # Enable RDP
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" `
+            -Value 0 `
+            -Force
+
+          # Disable NLA
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "UserAuthentication" `
+            -Value 0 `
+            -Force
+
+          # Set Security Layer
+          Set-ItemProperty `
+            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "SecurityLayer" `
+            -Value 0 `
+            -Force
+
+          # Configure Firewall
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" > $null 2>&1
+
+          netsh advfirewall firewall add rule `
+            name="RDP-Tailscale" `
+            dir=in `
+            action=allow `
+            protocol=TCP `
+            localport=3389
+
+          # Restart RDP Service
+          Restart-Service -Name TermService -Force
+
+          Write-Host "RDP Enabled Successfully"
+
+      # =========================
+      # Create RDP User
+      # =========================
+      - name: Create RDP User
+        shell: powershell
+        run: |
+          $username = "YamzzOfficial"
+          $password = "YamzzOfficial@123"
+
+          $securePass = ConvertTo-SecureString `
+            $password `
+            -AsPlainText `
+            -Force
+
+          # Create User
+          New-LocalUser `
+            -Name $username `
+            -Password $securePass `
+            -AccountNeverExpires
+
+          # Add Permissions
+          Add-LocalGroupMember `
+            -Group "Administrators" `
+            -Member $username
+
+          Add-LocalGroupMember `
+            -Group "Remote Desktop Users" `
+            -Member $username
+
+          # Save Credentials
+          echo "RDP_CREDS=User: $username | Password: $password" >> $env:GITHUB_ENV
+
+          # Verify User
+          if (-not (Get-LocalUser -Name $username)) {
+            Write-Error "Failed to create user"
+            exit 1
+          }
+
+          Write-Host "User Created Successfully"
+
+      # =========================
+      # Install Tailscale
+      # =========================
+      - name: Install Tailscale
+        shell: powershell
+        run: |
+          Write-Host "Downloading Tailscale..."
+
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+
+          Invoke-WebRequest `
+            -Uri $tsUrl `
+            -OutFile $installerPath
+
+          Write-Host "Installing Tailscale..."
+
+          Start-Process msiexec.exe `
+            -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" `
+            -Wait
+
+          Remove-Item $installerPath -Force
+
+          Write-Host "Tailscale Installed"
+
+      # =========================
+      # Connect Tailscale
+      # =========================
+      - name: Connect Tailscale
+        shell: powershell
+        run: |
+          Write-Host "Connecting to Tailscale..."
+
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=gh-runner-$env:GITHUB_RUN_ID
+
+          Start-Sleep -Seconds 10
+
+          # Get Tailscale IP
+          $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+          Write-Host ""
+          Write-Host "==============================="
+          Write-Host "Tailscale Connected!"
+          Write-Host "IP Address : $tsIP"
+          Write-Host "==============================="
+
+      # =========================
+      # Show Connection Info
+      # =========================
+      - name: Show RDP Details
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "===================================="
+          Write-Host "RDP IS READY"
+          Write-Host "===================================="
+          Write-Host "IP       : $env:TAILSCALE_IP"
+          Write-Host "Username : YamzzOfficial"
+          Write-Host "Password : YamzzOfficial@123"
+          Write-Host "===================================="
+
+      # =========================
+      # Keep Runner Alive
+      # =========================
+      - name: Keep Alive
+        shell: powershell
+        run: |
+          Write-Host "Keeping runner alive..."
+
+          while ($true) {
+            Start-Sleep -Seconds 300
+            Write-Host "Runner still active..."
+          }
